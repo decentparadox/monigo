@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/iyashjayesh/monigo/common"
@@ -20,18 +21,22 @@ var (
 	functionMetrics = make(map[string]*models.FunctionMetrics)
 	basePath        = common.GetBasePath()
 
-	// Sampling configuration
-	samplingRate = 100 // Trace 1 in 100 calls by default
+	// Sampling configuration (atomic to prevent data races)
+	samplingRate atomic.Int64
 	callCounters = make(map[string]uint64)
 	countersMu   sync.Mutex
 )
+
+func init() {
+	samplingRate.Store(100) // Default: trace 1 in 100 calls
+}
 
 // SetSamplingRate sets the sampling rate for function tracing
 func SetSamplingRate(rate int) {
 	if rate < 1 {
 		rate = 1
 	}
-	samplingRate = rate
+	samplingRate.Store(int64(rate))
 }
 
 // TraceFunction traces the function and captures the metrics
@@ -41,12 +46,17 @@ func TraceFunction(f func()) {
 	executeFunctionWithProfiling(name, f)
 }
 
-// FunctionTraceDetails returns the function trace details
+// FunctionTraceDetails returns a snapshot copy of the function trace details (thread-safe)
 func FunctionTraceDetails() map[string]*models.FunctionMetrics {
 	mu.Lock()
 	defer mu.Unlock()
 
-	return functionMetrics
+	result := make(map[string]*models.FunctionMetrics, len(functionMetrics))
+	for k, v := range functionMetrics {
+		copied := *v
+		result[k] = &copied
+	}
+	return result
 }
 
 // TraceFunctionWithArgs traces a function with parameters and captures the metrics
@@ -183,7 +193,7 @@ func executeFunctionWithProfiling(name string, fn func()) {
 	count := callCounters[name]
 	countersMu.Unlock()
 
-	shouldProfile := count%uint64(samplingRate) == 0
+	shouldProfile := count%uint64(samplingRate.Load()) == 0
 
 	initialGoroutines := runtime.NumGoroutine()
 	var memStatsBefore runtime.MemStats

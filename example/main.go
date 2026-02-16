@@ -24,7 +24,7 @@ func main() {
 			log.Fatalf("Failed to start MoniGo: %v", err)
 		}
 	}()
-	log.Printf("Monigo dashboard started at port %d\n", monigoInstance.GetRuningPort())
+	log.Printf("Monigo dashboard started at port %d\n", monigoInstance.GetRunningPort())
 
 	// Your application runs on a different port
 	http.HandleFunc("/api", apiHandler)

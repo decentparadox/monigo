@@ -104,7 +104,20 @@ func (b *MonigoBuilder) WithHeadless(headless bool) *MonigoBuilder {
 	return b
 }
 
-// Build builds the Monigo struct
+// Build validates the configuration and returns the Monigo struct.
+// Panics if ServiceName is empty since it is a required field.
 func (b *MonigoBuilder) Build() *Monigo {
+	if b.config.ServiceName == "" {
+		panic("[MoniGo] Build() failed: ServiceName is required. Use WithServiceName()")
+	}
+	if b.config.DashboardPort < 0 || b.config.DashboardPort > 65535 {
+		panic("[MoniGo] Build() failed: DashboardPort must be between 0 and 65535")
+	}
+	if b.config.SamplingRate < 0 {
+		panic("[MoniGo] Build() failed: SamplingRate must be >= 0")
+	}
+	if b.config.StorageType != "" && b.config.StorageType != "disk" && b.config.StorageType != "memory" {
+		panic("[MoniGo] Build() failed: StorageType must be 'disk' or 'memory'")
+	}
 	return b.config
 }
