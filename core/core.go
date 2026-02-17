@@ -345,7 +345,6 @@ func ConstructRawMemStats(memStats *runtime.MemStats) []models.RawMemStatsRecord
 		newRawRecord("alloc", float64(memStats.Alloc)),
 		newRawRecord("total_alloc", float64(memStats.TotalAlloc)),
 		newRawRecord("sys", float64(memStats.Sys)),
-		newRawRecord("sys", float64(memStats.Sys)),
 		newRawRecord("lookups", float64(memStats.Lookups)),
 		newRawRecord("mallocs", float64(memStats.Mallocs)),
 		newRawRecord("frees", float64(memStats.Frees)),
@@ -375,10 +374,29 @@ func ConstructRawMemStats(memStats *runtime.MemStats) []models.RawMemStatsRecord
 	return r
 }
 
-// newRawRecord creates a new Record with appropriate units and human-readable formats.
+// nonByteMetrics are metrics that represent counts or ratios, not byte values
+var nonByteMetrics = map[string]bool{
+	"lookups":         true,
+	"mallocs":         true,
+	"frees":           true,
+	"heap_objects":    true,
+	"next_gc":         true,
+	"last_gc":         true,
+	"pause_total_ns":  true,
+	"num_gc":          true,
+	"num_forced_gc":   true,
+	"gc_cpu_fraction": true,
+}
+
+// newRawRecord creates a new raw memory statistic record.
+// Byte metrics are converted to KB (base-1024); counts and ratios are stored as-is.
 func newRawRecord(name string, value float64) models.RawMemStatsRecords {
+	recordValue := value
+	if !nonByteMetrics[name] {
+		recordValue = value / 1024 // base-1024 KB, consistent with BytesToUnit
+	}
 	return models.RawMemStatsRecords{
 		RecordName:  name,
-		RecordValue: common.ConvertBytesToUnit(value, "KB"),
+		RecordValue: recordValue,
 	}
 }

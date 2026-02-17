@@ -3,7 +3,6 @@ package exporters
 import (
 	"sync"
 
-	"github.com/iyashjayesh/monigo/common"
 	"github.com/iyashjayesh/monigo/core"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -77,28 +76,20 @@ func (c *MonigoCollector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect is called by the Prometheus registry when collecting metrics.
 func (c *MonigoCollector) Collect(ch chan<- prometheus.Metric) {
-	// Fetch fresh stats from core
-	// Note: In a real high-throughput scenario, we might want to cache these
-	// or rely on the background strict loop in core. For now, we fetch on scrape.
-
-	// A safer way: Call GetServiceStats which aggregates everything
 	stats := core.GetServiceStats()
 
-	// CPU Load
+	// CPU Load — use raw float64 values directly, no string parsing
 	ch <- prometheus.MustNewConstMetric(
 		c.cpuUsage,
 		prometheus.GaugeValue,
-		common.ParseStringToFloat64(stats.LoadStatistics.SystemCPULoad),
+		stats.LoadStatistics.SystemCPULoadRaw,
 	)
 
-	// Memory Load (bytes)
-	// stats.MemoryStatistics.MemoryUsedBySystem is likely "12.5 GB" string.
-	// We should probably expose the raw bytes if available, or the load percentage.
-	// Let's expose the Load Percentage which is cleaner.
+	// Memory — use raw bytes value directly
 	ch <- prometheus.MustNewConstMetric(
 		c.memoryUsage,
 		prometheus.GaugeValue,
-		common.ParseStringToFloat64(stats.LoadStatistics.SystemMemLoad),
+		stats.MemoryStatistics.MemoryUsedBySystemRaw,
 	)
 
 	// Goroutines

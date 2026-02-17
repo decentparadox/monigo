@@ -2,11 +2,21 @@ package timeseries
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/iyashjayesh/monigo/models"
 	"github.com/nakabonne/tstorage"
 )
+
+// GetHostLabel returns a tstorage.Label with the actual hostname
+func GetHostLabel() tstorage.Label {
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
+	}
+	return tstorage.Label{Name: "host", Value: hostname}
+}
 
 // GetDataPoints retrieves data points for a given metric and labels.
 func GetDataPoints(metric string, labels []tstorage.Label, start, end int64) ([]*tstorage.DataPoint, error) {
@@ -31,7 +41,7 @@ func StoreServiceMetrics(serviceMetrics *models.ServiceStats) error {
 
 	currentTime := time.Now().In(location)
 	timestamp := currentTime.Unix()
-	label := tstorage.Label{Name: "host", Value: "server1"}
+	label := GetHostLabel()
 	var rows []tstorage.Row
 	rows = append(rows, generateCoreStatsRows(serviceMetrics, label, timestamp)...)
 	rows = append(rows, generateLoadStatsRows(serviceMetrics, label, timestamp)...)

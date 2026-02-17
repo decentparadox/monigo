@@ -1,6 +1,7 @@
 package monigo
 
 import (
+	"context"
 	"embed"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -109,8 +111,8 @@ func (m *Monigo) isAddrInUse(err error) bool {
 	return false
 }
 
-// GetRuningPort returns the running port
-func (m *Monigo) GetRuningPort() int {
+// GetRunningPort returns the running port
+func (m *Monigo) GetRunningPort() int {
 	return m.DashboardPort
 }
 
@@ -183,9 +185,6 @@ func (m *Monigo) setup() error {
 		return fmt.Errorf("[MoniGo] service_name is required, please provide the service name")
 	}
 
-	if err := timeseries.PurgeStorage(); err != nil {
-		return fmt.Errorf("[MoniGo] Warning: failed to purge storage: %v", err)
-	}
 	if err := timeseries.SetDataPointsSyncFrequency(m.DataPointsSyncFrequency); err != nil {
 		return fmt.Errorf("[MoniGo] failed to set data points sync frequency: %v", err)
 	}
@@ -323,7 +322,7 @@ func StartDashboard(port int) error {
 // StartDashboardWithCustomPath starts the dashboard on the specified port with a custom API path
 func StartDashboardWithCustomPath(port int, customBaseAPIPath string) error {
 	if port == 0 {
-		port = 8080 // Default port for the dashboard
+		port = 8080
 	}
 
 	apiPath := baseAPIPath
@@ -331,23 +330,47 @@ func StartDashboardWithCustomPath(port int, customBaseAPIPath string) error {
 		apiPath = customBaseAPIPath
 	}
 
-	// HTML site
-	http.HandleFunc("/", serveHtmlSite)
+	mux := http.NewServeMux()
 
-	// API to get Service Statistics
-	http.HandleFunc(fmt.Sprintf("%s/metrics", apiPath), api.GetServiceStatistics)
+	// Static files
+	mux.HandleFunc("/", serveHtmlSite)
 
-	// Service APIs
-	http.HandleFunc(fmt.Sprintf("%s/service-info", apiPath), api.GetServiceInfoAPI)
-	http.HandleFunc(fmt.Sprintf("%s/service-metrics", apiPath), api.GetServiceMetricsFromStorage)
-	http.HandleFunc(fmt.Sprintf("%s/go-routines-stats", apiPath), api.GetGoRoutinesStats)
-	http.HandleFunc(fmt.Sprintf("%s/function", apiPath), api.GetFunctionTraceDetails)
-	http.HandleFunc(fmt.Sprintf("%s/function-details", apiPath), api.ViewFunctionMaetrtics)
-	http.HandleFunc("/metrics", api.PrometheusMetricsHandler)
+	// API endpoints
+	mux.HandleFunc(fmt.Sprintf("%s/metrics", apiPath), api.GetServiceStatistics)
+	mux.HandleFunc(fmt.Sprintf("%s/service-info", apiPath), api.GetServiceInfoAPI)
+	mux.HandleFunc(fmt.Sprintf("%s/service-metrics", apiPath), api.GetServiceMetricsFromStorage)
+	mux.HandleFunc(fmt.Sprintf("%s/go-routines-stats", apiPath), api.GetGoRoutinesStats)
+	mux.HandleFunc(fmt.Sprintf("%s/function", apiPath), api.GetFunctionTraceDetails)
+	mux.HandleFunc(fmt.Sprintf("%s/function-details", apiPath), api.ViewFunctionMetrics)
+	mux.HandleFunc("/metrics", api.PrometheusMetricsHandler)
+	mux.HandleFunc(fmt.Sprintf("%s/reports", apiPath), api.GetReportData)
 
-	// Reports
-	http.HandleFunc(fmt.Sprintf("%s/reports", apiPath), api.GetReportData)
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil); err != nil {
+	srv := &http.Server{
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	// Graceful shutdown on SIGINT/SIGTERM
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		<-sigChan
+
+		log.Println("[MoniGo] Shutting down dashboard server...")
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("[MoniGo] Error during server shutdown: %v", err)
+		}
+		if err := timeseries.CloseStorage(); err != nil {
+			log.Printf("[MoniGo] Error closing storage: %v", err)
+		}
+	}()
+
+	log.Printf("[MoniGo] Dashboard started on http://localhost:%d\n", port)
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("error starting the dashboard: %v", err)
 	}
 
@@ -357,16 +380,38 @@ func StartDashboardWithCustomPath(port int, customBaseAPIPath string) error {
 // StartSecuredDashboard starts the dashboard with middleware support
 func StartSecuredDashboard(m *Monigo) error {
 	if m.DashboardPort == 0 {
-		m.DashboardPort = 8080 // Default port for the dashboard
+		m.DashboardPort = 8080
 	}
 
-	// Get secured handlers
+	mux := http.NewServeMux()
 	unifiedHandler := GetSecuredUnifiedHandler(m, m.CustomBaseAPIPath)
+	mux.HandleFunc("/", unifiedHandler)
 
-	// Register the secured handler
-	http.HandleFunc("/", unifiedHandler)
+	srv := &http.Server{
+		Addr:              fmt.Sprintf(":%d", m.DashboardPort),
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", m.DashboardPort), nil); err != nil {
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		<-sigChan
+
+		log.Println("[MoniGo] Shutting down secured dashboard server...")
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("[MoniGo] Error during server shutdown: %v", err)
+		}
+		if err := timeseries.CloseStorage(); err != nil {
+			log.Printf("[MoniGo] Error closing storage: %v", err)
+		}
+	}()
+
+	log.Printf("[MoniGo] Secured dashboard started on http://localhost:%d\n", m.DashboardPort)
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("error starting the secured dashboard: %v", err)
 	}
 
@@ -403,9 +448,8 @@ func RegisterAPIHandlers(mux *http.ServeMux, customBaseAPIPath ...string) {
 	mux.HandleFunc(fmt.Sprintf("%s/service-metrics", apiPath), api.GetServiceMetricsFromStorage)
 	mux.HandleFunc(fmt.Sprintf("%s/go-routines-stats", apiPath), api.GetGoRoutinesStats)
 	mux.HandleFunc(fmt.Sprintf("%s/function", apiPath), api.GetFunctionTraceDetails)
-	mux.HandleFunc(fmt.Sprintf("%s/function-details", apiPath), api.ViewFunctionMaetrtics)
-	mux.HandleFunc(fmt.Sprintf("%s/metrics", apiPath), api.GetServiceStatistics) // Existing JSON metrics
-	mux.HandleFunc("/metrics", api.PrometheusMetricsHandler)                     // New Prometheus metrics
+	mux.HandleFunc(fmt.Sprintf("%s/function-details", apiPath), api.ViewFunctionMetrics)
+	mux.HandleFunc("/metrics", api.PrometheusMetricsHandler)
 	mux.HandleFunc(fmt.Sprintf("%s/reports", apiPath), api.GetReportData)
 }
 
@@ -448,7 +492,7 @@ func GetAPIHandlers(customBaseAPIPath ...string) map[string]http.HandlerFunc {
 		fmt.Sprintf("%s/service-metrics", apiPath):   api.GetServiceMetricsFromStorage,
 		fmt.Sprintf("%s/go-routines-stats", apiPath): api.GetGoRoutinesStats,
 		fmt.Sprintf("%s/function", apiPath):          api.GetFunctionTraceDetails,
-		fmt.Sprintf("%s/function-details", apiPath):  api.ViewFunctionMaetrtics,
+		fmt.Sprintf("%s/function-details", apiPath):  api.ViewFunctionMetrics,
 		"/metrics":                         api.PrometheusMetricsHandler,
 		fmt.Sprintf("%s/reports", apiPath): api.GetReportData,
 	}
@@ -529,7 +573,7 @@ func GetSecuredAPIHandlers(m *Monigo, customBaseAPIPath ...string) map[string]ht
 		fmt.Sprintf("%s/service-metrics", apiPath):   api.GetServiceMetricsFromStorage,
 		fmt.Sprintf("%s/go-routines-stats", apiPath): api.GetGoRoutinesStats,
 		fmt.Sprintf("%s/function", apiPath):          api.GetFunctionTraceDetails,
-		fmt.Sprintf("%s/function-details", apiPath):  api.ViewFunctionMaetrtics,
+		fmt.Sprintf("%s/function-details", apiPath):  api.ViewFunctionMetrics,
 		"/metrics":                         api.PrometheusMetricsHandler,
 		fmt.Sprintf("%s/reports", apiPath): api.GetReportData,
 	}
@@ -596,7 +640,7 @@ func routeToAPIHandler(w http.ResponseWriter, r *http.Request, apiPath string) {
 	case path == fmt.Sprintf("%s/function", apiPath):
 		api.GetFunctionTraceDetails(w, r)
 	case path == fmt.Sprintf("%s/function-details", apiPath):
-		api.ViewFunctionMaetrtics(w, r)
+		api.ViewFunctionMetrics(w, r)
 	case path == fmt.Sprintf("%s/reports", apiPath):
 		api.GetReportData(w, r)
 	default:
@@ -618,7 +662,7 @@ func routeToFiberAPIHandler(c *fiber.Ctx, path, apiPath string) error {
 	case path == fmt.Sprintf("%s/function", apiPath):
 		return handleFiberAPI(c, api.GetFunctionTraceDetails)
 	case path == fmt.Sprintf("%s/function-details", apiPath):
-		return handleFiberAPI(c, api.ViewFunctionMaetrtics)
+		return handleFiberAPI(c, api.ViewFunctionMetrics)
 	case path == fmt.Sprintf("%s/reports", apiPath):
 		return handleFiberAPI(c, api.GetReportData)
 	default:
@@ -980,11 +1024,10 @@ func (rw *responseWriter) WriteHeader(code int) {
 
 // isStaticFile checks if the request path is for a static file
 func isStaticFile(path string) bool {
-	// List of static file extensions
+	// List of static file extensions (excluding .html/.htm so auth is enforced on pages)
 	staticExtensions := []string{
 		".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
-		".woff", ".woff2", ".ttf", ".eot", ".map", ".json", ".xml",
-		".pdf", ".zip", ".txt", ".html", ".htm",
+		".woff", ".woff2", ".ttf", ".eot", ".map",
 	}
 
 	// Check if path has a static file extension

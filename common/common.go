@@ -4,7 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"math"
 	"os"
@@ -21,7 +21,7 @@ const monigoFolder string = "monigo"
 
 var (
 	serviceInfo      models.ServiceInfo
-	rententionPeriod string
+	retentionPeriod string
 )
 
 // GetBasePath returns the base path for storage.
@@ -63,12 +63,12 @@ func GetDirSize(folderPath string) string {
 }
 
 // SetServiceInfo sets the service information.
-func SetServiceInfo(serviceName string, serviceStartTime time.Time, goVersion string, processId int32, rentainPeriod string) {
+func SetServiceInfo(serviceName string, serviceStartTime time.Time, goVersion string, processId int32, retention string) {
 	serviceInfo.ServiceName = serviceName
 	serviceInfo.ServiceStartTime = serviceStartTime
 	serviceInfo.GoVersion = goVersion
 	serviceInfo.ProcessId = processId
-	rententionPeriod = rentainPeriod
+	retentionPeriod = retention
 }
 
 // GetServiceInfo returns the service info.
@@ -235,26 +235,23 @@ func BytesToUnit(value uint64) string {
 	return fmt.Sprintf("%.2f %s", num, unit)
 }
 
-// ConvertBytesToUnit converts bytes to the specified unit and returns the result as a float64.
+// ConvertBytesToUnit converts bytes to the specified unit (base-1024) and returns the result as a float64.
 func ConvertBytesToUnit(bytes float64, unit string) float64 {
-	var result float64
-	base := float64(1000)
+	const base = 1024.0
 	unit = strings.ToUpper(unit)
 	switch unit {
 	case "KB":
-		result = bytes / base
+		return bytes / base
 	case "MB":
-		result = bytes / (base * base)
+		return bytes / (base * base)
 	case "GB":
-		result = bytes / (base * base * base)
+		return bytes / (base * base * base)
 	case "TB":
-		result = bytes / (base * base * base * base)
+		return bytes / (base * base * base * base)
 	default:
-		fmt.Println("Unknown unit")
+		log.Printf("[MoniGo] Warning: unknown unit %q in ConvertBytesToUnit", unit)
 		return 0
 	}
-
-	return result
 }
 
 // GetServiceStartTime returns the service start time.
@@ -286,18 +283,18 @@ func parseDuration(input string) (time.Duration, error) {
 
 // GetDataRetentionPeriod returns the retention period.
 func GetDataRetentionPeriod() time.Duration {
-
-	if rententionPeriod == "" {
-		rententionPeriod = "7d"
+	period := retentionPeriod
+	if period == "" {
+		period = "7d"
 	}
 
-	rententionPeriod, err := parseDuration(rententionPeriod)
+	duration, err := parseDuration(period)
 	if err != nil {
 		log.Printf("[MoniGo] Error parsing retention period, using default retention period (7d): %v", err)
-		rententionPeriod = time.Duration(7) * 24 * time.Hour
+		duration = 7 * 24 * time.Hour
 	}
 
-	return rententionPeriod
+	return duration
 }
 
 // Helper function to set default string value
@@ -386,7 +383,7 @@ func (c *Cache) LoadFromFile(filename string) error {
 		return nil
 	}
 
-	base64Data, err := ioutil.ReadAll(file)
+	base64Data, err := io.ReadAll(file)
 	if err != nil {
 		return fmt.Errorf("failed to read cache file: %w", err)
 	}

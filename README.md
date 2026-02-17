@@ -88,7 +88,7 @@ func main() {
             log.Fatalf("Failed to start MoniGo: %v", err)
         }
     }()
-	log.Printf("Monigo dashboard started at port %d\n", monigoInstance.GetRuningPort())
+	log.Printf("Monigo dashboard started at port %d\n", monigoInstance.GetRunningPort())
 
   	// Optional
 	// routinesStats := monigoInstance.GetGoRoutinesStats() // Get go routines stats
