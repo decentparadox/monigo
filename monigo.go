@@ -24,8 +24,8 @@ import (
 )
 
 var (
-	//go:embed static/*
-	staticFiles embed.FS                         // Embedding the static files
+	//go:embed web/build/*
+	staticFiles embed.FS                         // Embedding the static files (SvelteKit build output)
 	Once        sync.Once          = sync.Once{} // Ensures that the storage is initialized only once
 	BasePath    string                           // Base path for the monigo
 	baseAPIPath = "/monigo/api/v1"               // Base API path for the dashboard
@@ -664,7 +664,7 @@ func handleFiberAPI(c *fiber.Ctx, handler func(http.ResponseWriter, *http.Reques
 
 // serveFiberStaticFiles serves static files for Fiber
 func serveFiberStaticFiles(c *fiber.Ctx, path string) error {
-	baseDir := "static"
+	baseDir := "web/build"
 
 	// Mapping of content types based on file extensions
 	contentTypes := map[string]string{
@@ -705,7 +705,7 @@ func serveFiberStaticFiles(c *fiber.Ctx, path string) error {
 
 // serveHtmlSite serves the HTML, CSS, JS, and other static files
 func serveHtmlSite(w http.ResponseWriter, r *http.Request) {
-	baseDir := "static"
+	baseDir := "web/build"
 	// Mapping of content types based on file extensions
 	contentTypes := map[string]string{
 		".html":  "text/html",
@@ -996,7 +996,7 @@ func isStaticFile(path string) bool {
 
 	// Check for common static file paths
 	staticPaths := []string{
-		"/css/", "/js/", "/assets/", "/images/", "/fonts/", "/static/",
+		"/css/", "/js/", "/assets/", "/images/", "/fonts/", "/static/", 
 	}
 
 	for _, staticPath := range staticPaths {
