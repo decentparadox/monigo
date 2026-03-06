@@ -1,10 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import { fetchFunctionTrace, fetchFunctionDetails } from '$lib/api/monigo.js';
-	import { Search, Eye } from 'lucide-svelte';
 
 	let functions = $state<Record<string, { function_last_ran_at: string }>>({});
 	let selectedFunc = $state<string | null>(null);
@@ -17,9 +13,7 @@
 		loading = true;
 		error = null;
 		fetchFunctionTrace()
-			.then((data) => {
-				functions = data;
-			})
+			.then((data) => { functions = data; })
 			.catch((e) => (error = e.message))
 			.finally(() => (loading = false));
 	}
@@ -39,65 +33,63 @@
 
 <svelte:head><title>Function Metrics - MoniGo</title></svelte:head>
 
-<div class="space-y-6 p-6 w-full">
+<div class="p-4 md:p-6 space-y-4">
 	<div class="flex items-center justify-between">
-		<h1 class="text-2xl font-bold">Function Metrics</h1>
-		<Button variant="outline" size="sm" onclick={load} disabled={loading}>
-			<Search class="mr-2 h-4 w-4" />
-			Refresh
-		</Button>
+		<div>
+			<div class="hud-label mb-1">Performance</div>
+			<div class="hud-value-lg">Function Metrics</div>
+		</div>
+		<button class="hud-button" onclick={load} disabled={loading}>Refresh</button>
 	</div>
 
+	<hr class="hud-divider" />
+
 	{#if error}
-		<Card.Root class="border-destructive">
-			<Card.Content class="pt-6"><p class="text-destructive">{error}</p></Card.Content>
-		</Card.Root>
-	{:else if loading}
-		<Card.Root><Card.Content class="pt-6"><Skeleton class="h-32 w-full" /></Card.Content></Card.Root>
-	{:else if Object.keys(functions).length === 0}
-		<Card.Root>
-			<Card.Content class="pt-6">
-				<p class="text-muted-foreground">
-					No function metrics available. Instrument functions with monigo.TraceFunction() to see metrics.
-				</p>
-			</Card.Content>
-		</Card.Root>
-	{:else}
-		<div class="flex items-center gap-2 mb-4">
-			<span class="text-sm font-medium">Total functions:</span>
-			<span class="text-lg font-bold">{Object.keys(functions).length}</span>
+		<div class="hud-error-panel p-4">
+			<div class="hud-label mb-2 text-hud-error">Error</div>
+			<div class="hud-value-sm">{error}</div>
 		</div>
-		<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+	{:else if loading}
+		<div class="hud-panel p-4">
+			<div class="hud-skeleton h-24 w-full"></div>
+		</div>
+	{:else if Object.keys(functions).length === 0}
+		<div class="hud-panel p-4">
+			<div class="hud-value-sm text-hud-text-dim">
+				No function metrics available. Instrument functions with monigo.TraceFunction() to see metrics.
+			</div>
+		</div>
+	{:else}
+		<div class="flex items-center gap-2 mb-2">
+			<span class="hud-label">Total Functions</span>
+			<span class="hud-value-md text-hud-cyan">{Object.keys(functions).length}</span>
+		</div>
+
+		<div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
 			{#each Object.entries(functions) as [name, data]}
-				<Card.Root>
-					<Card.Header class="pb-2">
-						<Card.Title class="text-sm font-medium truncate" title={name}>{name}</Card.Title>
-					</Card.Header>
-					<Card.Content>
-						<p class="text-xs text-muted-foreground mb-3">Last ran: {data.function_last_ran_at}</p>
-						<Button variant="outline" size="sm" onclick={() => viewDetails(name)}>
-							<Eye class="mr-2 h-4 w-4" />
-							Details
-						</Button>
-					</Card.Content>
-				</Card.Root>
+				<div class="hud-panel p-4">
+					<div class="hud-value-sm mb-2 truncate text-hud-text-bright" title={name}>{name}</div>
+					<div class="hud-label mb-3">Last ran: {data.function_last_ran_at}</div>
+					<button class="hud-button" onclick={() => viewDetails(name)}>Details</button>
+				</div>
 			{/each}
 		</div>
 
 		{#if selectedFunc}
-			<Card.Root class="mt-6">
-				<Card.Header class="flex flex-row items-center justify-between">
-					<Card.Title>Details: {selectedFunc}</Card.Title>
-					<Button variant="ghost" size="sm" onclick={() => (selectedFunc = null)}>Close</Button>
-				</Card.Header>
-				<Card.Content>
-					{#if detailsLoading}
-						<Skeleton class="h-48 w-full" />
-					{:else if funcDetails}
-						<pre class="text-xs overflow-auto max-h-96 rounded-md bg-muted p-4">{funcDetails}</pre>
-					{/if}
-				</Card.Content>
-			</Card.Root>
+			<div class="hud-panel p-4 mt-4">
+				<div class="flex items-center justify-between mb-3">
+					<div>
+						<div class="hud-label mb-1">Details</div>
+						<div class="hud-value-sm text-hud-text-bright">{selectedFunc}</div>
+					</div>
+					<button class="hud-button" onclick={() => (selectedFunc = null)}>Close</button>
+				</div>
+				{#if detailsLoading}
+					<div class="hud-skeleton h-32 w-full"></div>
+				{:else if funcDetails}
+					<pre class="hud-code max-h-96">{funcDetails}</pre>
+				{/if}
+			</div>
 		{/if}
 	{/if}
 </div>

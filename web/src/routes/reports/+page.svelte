@@ -1,11 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import * as echarts from 'echarts';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import { fetchReports } from '$lib/api/monigo.js';
-	import { RefreshCw } from 'lucide-svelte';
+	import {
+		chartColors, baseChartOption, titleStyle, tooltipStyle, axisStyle, legendStyle, lineSeries
+	} from '$lib/chart-theme.js';
 
 	let reports = $state<Array<{ time: string; value: Record<string, number> }>>([]);
 	let loading = $state(true);
@@ -14,40 +13,20 @@
 	let chartEl: HTMLDivElement;
 
 	const timeRanges: Record<string, number> = {
-		'5m': 5,
-		'15m': 15,
-		'30m': 30,
-		'1h': 60,
-		'6h': 360,
-		'1d': 1440,
-		'3d': 4320,
-		'7d': 10080
+		'5m': 5, '15m': 15, '30m': 30, '1h': 60, '6h': 360, '1d': 1440, '3d': 4320, '7d': 10080
 	};
 
 	function toLocalISOString(d: Date) {
 		const tz = -d.getTimezoneOffset();
 		const pad = (n: number) => Math.floor(Math.abs(n)).toString().padStart(2, '0');
 		return (
-			d.getFullYear() +
-			'-' +
-			pad(d.getMonth() + 1) +
-			'-' +
-			pad(d.getDate()) +
-			'T' +
-			pad(d.getHours()) +
-			':' +
-			pad(d.getMinutes()) +
-			':' +
-			pad(d.getSeconds()) +
-			'.000' +
-			(tz >= 0 ? '+' : '-') +
-			pad(tz / 60) +
-			':' +
-			pad(tz % 60)
+			d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+			'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) +
+			'.000' + (tz >= 0 ? '+' : '-') + pad(tz / 60) + ':' + pad(tz % 60)
 		);
 	}
 
-	async function load() {
+	function load() {
 		loading = true;
 		error = null;
 		const now = new Date();
@@ -59,13 +38,65 @@
 			end_time: toLocalISOString(now),
 			time_frame: timeframe
 		})
-			.then((data) => (reports = data))
-			.catch((e) => (error = e.message))
-			.finally(() => (loading = false));
+			.then((data) => { reports = Array.isArray(data) ? data : []; })
+			.catch((e) => { error = e.message; reports = []; })
+			.finally(() => { loading = false; });
+	}
+
+	function renderChart() {
+		if (!chartEl || reports.length === 0) return;
+
+		const existing = echarts.getInstanceByDom(chartEl);
+		if (existing) existing.dispose();
+
+		const colors = chartColors();
+		const axis = axisStyle();
+		const chart = echarts.init(chartEl);
+
+		const seriesData: Record<string, [string, number][]> = {};
+		reports.forEach((dp) => {
+			const t = new Date(dp.time).toLocaleTimeString();
+			for (const k of Object.keys(dp.value || {})) {
+				if (!seriesData[k]) seriesData[k] = [];
+				seriesData[k].push([t, dp.value[k]]);
+			}
+		});
+
+		chart.setOption({
+			...baseChartOption(),
+			title: titleStyle('LOAD REPORT'),
+			tooltip: { ...tooltipStyle(), trigger: 'axis' },
+			legend: { top: 0, right: 0, ...legendStyle() },
+			grid: { top: 30, bottom: 20, left: 50, right: 16 },
+			xAxis: { type: 'category', boundaryGap: false, ...axis.xAxis },
+			yAxis: { type: 'value', ...axis.yAxis },
+			series: Object.entries(seriesData).map(([name, data], i) =>
+				lineSeries(name, data, colors[i % colors.length])
+			),
+		});
+	}
+
+	function handleTimeframeChange() {
+		load();
 	}
 
 	onMount(() => {
+		load();
+
+		const onResize = () => {
+			if (chartEl) {
+				const inst = echarts.getInstanceByDom(chartEl);
+				if (inst) inst.resize();
+			}
+		};
+
+		const onThemeChange = () => renderChart();
+
+		window.addEventListener('resize', onResize);
+		window.addEventListener('theme-change', onThemeChange);
 		return () => {
+			window.removeEventListener('resize', onResize);
+			window.removeEventListener('theme-change', onThemeChange);
 			if (chartEl) {
 				const inst = echarts.getInstanceByDom(chartEl);
 				if (inst) inst.dispose();
@@ -74,75 +105,51 @@
 	});
 
 	$effect(() => {
-		timeframe;
-		load();
-	});
-
-	$effect(() => {
-		if (!chartEl || reports.length === 0 || loading) return;
-		const chart = echarts.init(chartEl);
-		const seriesData: Record<string, [string, number][]> = {};
-		reports.forEach((dp) => {
-			const t = new Date(dp.time).toLocaleString();
-			for (const k of Object.keys(dp.value || {})) {
-				if (!seriesData[k]) seriesData[k] = [];
-				seriesData[k].push([t, dp.value[k]]);
-			}
-		});
-		chart.setOption({
-			title: { text: 'Load Report' },
-			tooltip: { trigger: 'axis' },
-			legend: { top: 30, data: Object.keys(seriesData) },
-			xAxis: { type: 'category', boundaryGap: false },
-			yAxis: { type: 'value' },
-			series: Object.entries(seriesData).map(([name, data]) => ({ name, type: 'line', data, smooth: true }))
-		});
-		return () => chart.dispose();
+		if (loading || reports.length === 0) return;
+		requestAnimationFrame(() => renderChart());
 	});
 </script>
 
 <svelte:head><title>Reports - MoniGo</title></svelte:head>
 
-<div class="space-y-6 p-6">
+<div class="p-4 md:p-6 space-y-4">
 	<div class="flex items-center justify-between">
-		<h1 class="text-2xl font-bold">Reports</h1>
+		<div>
+			<div class="hud-label mb-1">Analytics</div>
+			<div class="hud-value-lg">Reports</div>
+		</div>
 		<div class="flex gap-2">
-			<select
-				bind:value={timeframe}
-				class="rounded-md border border-input bg-background px-3 py-1 text-sm"
-			>
-				<option value="5m">5 Minutes</option>
-				<option value="15m">15 Minutes</option>
-				<option value="30m">30 Minutes</option>
-				<option value="1h">1 Hour</option>
-				<option value="6h">6 Hours</option>
-				<option value="1d">1 Day</option>
-				<option value="3d">3 Days</option>
-				<option value="7d">7 Days</option>
+			<select bind:value={timeframe} class="hud-select" onchange={handleTimeframeChange}>
+				<option value="5m">5m</option>
+				<option value="15m">15m</option>
+				<option value="30m">30m</option>
+				<option value="1h">1h</option>
+				<option value="6h">6h</option>
+				<option value="1d">1d</option>
+				<option value="3d">3d</option>
+				<option value="7d">7d</option>
 			</select>
-			<Button variant="outline" size="sm" onclick={load} disabled={loading}>
-				<RefreshCw class="mr-2 h-4 w-4" />
-				Refresh
-			</Button>
+			<button class="hud-button" onclick={() => load()} disabled={loading}>Refresh</button>
 		</div>
 	</div>
 
+	<hr class="hud-divider" />
+
 	{#if error}
-		<Card.Root class="border-destructive">
-			<Card.Content class="pt-6"><p class="text-destructive">{error}</p></Card.Content>
-		</Card.Root>
+		<div class="hud-error-panel p-4">
+			<div class="hud-label mb-2 text-hud-error">Error</div>
+			<div class="hud-value-sm">{error}</div>
+		</div>
 	{:else}
-		<Card.Root>
-			<Card.Header><Card.Title>Load Metrics Over Time</Card.Title></Card.Header>
-			<Card.Content>
-				{#if loading}
-					<Skeleton class="h-64 w-full" />
-				{:else if reports.length > 0}
-					<div bind:this={chartEl} class="h-64 w-full"></div>
-				{:else}
-					<p class="text-muted-foreground text-sm">No report data available.</p>
-				{/if}
-			</Card.Content>
-		</Card.Root>
+		<div class="hud-panel p-4">
+			<div class="hud-label mb-3">Load Metrics Over Time</div>
+			{#if loading}
+				<div class="hud-skeleton h-56 w-full"></div>
+			{:else if reports.length > 0}
+				<div bind:this={chartEl} class="h-56 w-full"></div>
+			{:else}
+				<div class="hud-value-sm text-hud-text-dim">No report data available for this time range.</div>
+			{/if}
+		</div>
 	{/if}
 </div>

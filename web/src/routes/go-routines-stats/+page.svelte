@@ -1,11 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import * as echarts from 'echarts';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import { fetchGoRoutinesStats, fetchServiceMetrics } from '$lib/api/monigo.js';
-	import { RefreshCw, Activity } from 'lucide-svelte';
+	import {
+		getTheme, baseChartOption, titleStyle, tooltipStyle, axisStyle, lineSeries
+	} from '$lib/chart-theme.js';
 
 	let stats = $state<{ number_of_goroutines: number; stack_view: string[] } | null>(null);
 	let historyData = $state<Array<{ time: string; value: Record<string, number> }>>([]);
@@ -17,22 +16,9 @@
 		const tz = -d.getTimezoneOffset();
 		const pad = (n: number) => Math.floor(Math.abs(n)).toString().padStart(2, '0');
 		return (
-			d.getFullYear() +
-			'-' +
-			pad(d.getMonth() + 1) +
-			'-' +
-			pad(d.getDate()) +
-			'T' +
-			pad(d.getHours()) +
-			':' +
-			pad(d.getMinutes()) +
-			':' +
-			pad(d.getSeconds()) +
-			'.000' +
-			(tz >= 0 ? '+' : '-') +
-			pad(tz / 60) +
-			':' +
-			pad(tz % 60)
+			d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+			'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) +
+			'.000' + (tz >= 0 ? '+' : '-') + pad(tz / 60) + ':' + pad(tz % 60)
 		);
 	}
 
@@ -50,17 +36,60 @@
 				end_time: toLocalISOString(now)
 			})
 		])
-			.then(([s, h]) => {
-				stats = s;
-				historyData = h;
-			})
+			.then(([s, h]) => { stats = s; historyData = Array.isArray(h) ? h : []; })
 			.catch((e) => (error = e.message))
 			.finally(() => (loading = false));
 	}
 
+	function renderChart() {
+		if (!chartEl || historyData.length === 0) return;
+
+		const existing = echarts.getInstanceByDom(chartEl);
+		if (existing) existing.dispose();
+
+		const t = getTheme();
+		const axis = axisStyle();
+		const chart = echarts.init(chartEl);
+
+		const seriesData: Record<string, [string, number][]> = {};
+		historyData.forEach((dp) => {
+			const time = new Date(dp.time).toLocaleTimeString();
+			for (const k of Object.keys(dp.value || {})) {
+				if (!seriesData[k]) seriesData[k] = [];
+				seriesData[k].push([time, dp.value[k]]);
+			}
+		});
+
+		chart.setOption({
+			...baseChartOption(),
+			title: titleStyle('GOROUTINES OVER TIME'),
+			tooltip: { ...tooltipStyle(), trigger: 'axis' },
+			grid: { top: 30, bottom: 20, left: 50, right: 16 },
+			xAxis: { type: 'category', boundaryGap: false, ...axis.xAxis },
+			yAxis: { type: 'value', ...axis.yAxis },
+			series: Object.entries(seriesData).map(([name, data]) =>
+				lineSeries(name, data, t.cyan)
+			),
+		});
+	}
+
 	onMount(() => {
 		load();
+
+		const onResize = () => {
+			if (chartEl) {
+				const inst = echarts.getInstanceByDom(chartEl);
+				if (inst) inst.resize();
+			}
+		};
+
+		const onThemeChange = () => renderChart();
+
+		window.addEventListener('resize', onResize);
+		window.addEventListener('theme-change', onThemeChange);
 		return () => {
+			window.removeEventListener('resize', onResize);
+			window.removeEventListener('theme-change', onThemeChange);
 			if (chartEl) {
 				const inst = echarts.getInstanceByDom(chartEl);
 				if (inst) inst.dispose();
@@ -69,80 +98,59 @@
 	});
 
 	$effect(() => {
-		if (!chartEl || historyData.length === 0 || loading) return;
-		const chart = echarts.init(chartEl);
-		const seriesData: Record<string, [string, number][]> = {};
-		historyData.forEach((dp) => {
-			const t = new Date(dp.time).toLocaleString();
-			for (const k of Object.keys(dp.value || {})) {
-				if (!seriesData[k]) seriesData[k] = [];
-				seriesData[k].push([t, dp.value[k]]);
-			}
-		});
-		chart.setOption({
-			title: { text: 'Goroutines Over Time' },
-			tooltip: { trigger: 'axis' },
-			xAxis: { type: 'category', boundaryGap: false },
-			yAxis: { type: 'value' },
-			series: Object.entries(seriesData).map(([name, data]) => ({ name, type: 'line', data, smooth: true }))
-		});
-		return () => chart.dispose();
+		if (loading || historyData.length === 0) return;
+		requestAnimationFrame(() => renderChart());
 	});
 </script>
 
 <svelte:head><title>Go Routines Stats - MoniGo</title></svelte:head>
 
-<div class="space-y-6 p-6 w-full">
+<div class="p-4 md:p-6 space-y-4">
 	<div class="flex items-center justify-between">
-		<h1 class="text-2xl font-bold">Go Routines Stats</h1>
-		<Button variant="outline" size="sm" onclick={load} disabled={loading}>
-			<RefreshCw class="mr-2 h-4 w-4" />
-			Refresh
-		</Button>
+		<div>
+			<div class="hud-label mb-1">Concurrency</div>
+			<div class="hud-value-lg">Goroutines</div>
+		</div>
+		<button class="hud-button" onclick={load} disabled={loading}>Refresh</button>
 	</div>
 
-	{#if error}
-		<Card.Root class="border-destructive">
-			<Card.Content class="pt-6"><p class="text-destructive">{error}</p></Card.Content>
-		</Card.Root>
-	{:else if loading}
-		<Card.Root><Card.Content class="pt-6"><Skeleton class="h-32 w-full" /></Card.Content></Card.Root>
-	{:else if stats}
-		<Card.Root>
-			<Card.Header class="flex flex-row items-center justify-between">
-				<Card.Title class="flex items-center gap-2">
-					<Activity class="h-5 w-5" />
-					Goroutine Count
-				</Card.Title>
-				<div class="text-3xl font-bold">{stats.number_of_goroutines}</div>
-			</Card.Header>
-		</Card.Root>
+	<hr class="hud-divider" />
 
-		<Card.Root>
-			<Card.Header><Card.Title>Goroutines Over Time (1h)</Card.Title></Card.Header>
-			<Card.Content>
-				{#if historyData.length > 0}
-					<div bind:this={chartEl} class="h-64 w-full"></div>
-				{:else}
-					<p class="text-muted-foreground text-sm">No history data available.</p>
-				{/if}
-			</Card.Content>
-		</Card.Root>
+	{#if error}
+		<div class="hud-error-panel p-4">
+			<div class="hud-label mb-2 text-hud-error">Error</div>
+			<div class="hud-value-sm">{error}</div>
+		</div>
+	{:else if loading}
+		<div class="hud-panel p-4">
+			<div class="hud-skeleton h-24 w-full"></div>
+		</div>
+	{:else if stats}
+		<div class="hud-panel p-4 flex items-center justify-between">
+			<div class="hud-label">Active Goroutines</div>
+			<div class="hud-value-xl text-hud-cyan">{stats.number_of_goroutines}</div>
+		</div>
+
+		<div class="hud-panel p-4">
+			{#if historyData.length > 0}
+				<div bind:this={chartEl} class="h-56 w-full"></div>
+			{:else}
+				<div class="hud-value-sm text-hud-text-dim">No history data available.</div>
+			{/if}
+		</div>
 
 		{#if stats.stack_view?.length}
-			<Card.Root>
-				<Card.Header><Card.Title>Stack Traces</Card.Title></Card.Header>
-				<Card.Content>
-					<div class="space-y-4">
-						{#each stats.stack_view as trace, i}
-							<details class="rounded-md border p-4">
-								<summary class="cursor-pointer font-medium">Goroutine {i + 1}</summary>
-								<pre class="mt-2 text-xs overflow-auto whitespace-pre-wrap text-muted-foreground">{trace}</pre>
-							</details>
-						{/each}
-					</div>
-				</Card.Content>
-			</Card.Root>
+			<div class="hud-panel p-4">
+				<div class="hud-label mb-3">Stack Traces</div>
+				<div class="space-y-2">
+					{#each stats.stack_view as trace, i}
+						<details class="hud-details">
+							<summary>Goroutine {i + 1}</summary>
+							<pre>{trace}</pre>
+						</details>
+					{/each}
+				</div>
+			</div>
 		{/if}
 	{/if}
 </div>
